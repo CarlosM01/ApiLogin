@@ -11,17 +11,10 @@ PYTHON      := $(VENV)/bin/python
 UVICORN     := $(VENV)/bin/uvicorn
 IMAGE_NAME  := login-api
 
-# SSH tunnel settings (loaded from .env via shell)
-SSH_USER    := $(shell grep '^SSH_USER=' .env 2>/dev/null | cut -d= -f2)
-SSH_HOST    := $(shell grep '^SSH_HOST=' .env 2>/dev/null | cut -d= -f2)
-SSH_KEY     := $(shell grep '^SSH_KEY=' .env 2>/dev/null | cut -d= -f2)
-SSH_LOCAL   := $(shell grep '^SSH_LOCAL_PORT=' .env 2>/dev/null | cut -d= -f2)
-SSH_REMOTE  := $(shell grep '^SSH_REMOTE_PORT=' .env 2>/dev/null | cut -d= -f2)
-TUNNEL_PID  := .tunnel.pid
-
+# An attempt is made to run 'docker compose version'. If it fails, 'docker-compose' is assumed.
+DOCKER_COMPOSE := $(shell docker compose version > /dev/null 2>&1 && echo "docker compose" || echo "docker-compose")
 .PHONY: help setup venv install run dev clean lint format \
-        build run-image up down logs \
-        tunnel tunnel-status tunnel-stop
+        build run-image up down logs
 
 ## ── Help ────────────────────────────────────────────────
 help: ## Show this help message
@@ -63,47 +56,16 @@ run-image: ## Run the Docker container standalone
 	docker run --rm -p $(PORT):$(PORT) --env-file .env $(IMAGE_NAME)
 
 up: ## Start services with docker-compose
-	docker compose up -d --build
+	$(DOCKER_COMPOSE) up -d --build
 
 down: ## Stop docker-compose services
-	docker compose down
+	$(DOCKER_COMPOSE) down
 
 logs: ## Tail docker-compose logs
-	docker compose logs -f
-
-## ── SSH Tunnel (Port Forwarding) ────────────────────────
-tunnel: ## Open SSH tunnel to forward local port to remote API
-	@if [ -f $(TUNNEL_PID) ] && kill -0 $$(cat $(TUNNEL_PID)) 2>/dev/null; then \
-		echo "Tunnel already running (PID $$(cat $(TUNNEL_PID)))"; \
-	else \
-		echo "Opening SSH tunnel: localhost:$(SSH_LOCAL) -> $(SSH_HOST):$(SSH_REMOTE)…"; \
-		ssh -fNL $(SSH_LOCAL):localhost:$(SSH_REMOTE) \
-			-i $(SSH_KEY) $(SSH_USER)@$(SSH_HOST) \
-			-o ExitOnForwardFailure=yes \
-			-o ServerAliveInterval=60 \
-			-o ServerAliveCountMax=3; \
-		lsof -ti :$(SSH_LOCAL) -sTCP:LISTEN > $(TUNNEL_PID); \
-		echo "Tunnel open (PID $$(cat $(TUNNEL_PID)))"; \
-	fi
-
-tunnel-status: ## Check if the SSH tunnel is running
-	@if [ -f $(TUNNEL_PID) ] && kill -0 $$(cat $(TUNNEL_PID)) 2>/dev/null; then \
-		echo "Tunnel is RUNNING (PID $$(cat $(TUNNEL_PID)))"; \
-	else \
-		echo "Tunnel is NOT running"; \
-		rm -f $(TUNNEL_PID); \
-	fi
-
-tunnel-stop: ## Close the SSH tunnel
-	@if [ -f $(TUNNEL_PID) ]; then \
-		kill $$(cat $(TUNNEL_PID)) 2>/dev/null && echo "Tunnel stopped" || echo "Tunnel was not running"; \
-		rm -f $(TUNNEL_PID); \
-	else \
-		echo "No tunnel PID file found"; \
-	fi
+	$(DOCKER_COMPOSE) logs -f
 
 ## ── Cleanup ─────────────────────────────────────────────
 clean: ## Remove venv, caches, and compiled files
-	rm -rf $(VENV) __pycache__ .ruff_cache $(TUNNEL_PID)
+	rm -rf $(VENV) __pycache__ .ruff_cache
 	find . -name '*.pyc' -delete
 	find . -name '__pycache__' -type d -exec rm -rf {} +
